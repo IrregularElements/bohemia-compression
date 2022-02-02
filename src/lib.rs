@@ -75,17 +75,30 @@ pub trait Algorithm : Default {
 	}
 
 
-	fn filter_slice<W: Write>(&mut self, input: &[u8], output: &mut W) -> BcResult<usize> {
-		let mut cursor = Cursor::new(input);
-		self.filter_to_end(&mut cursor, output)
+	fn filter_iter<I: IntoIterator<Item=u8>, W: Write>(&mut self, input: I, output: &mut W) -> BcResult<usize> {
+		let subtotal: usize = <I as IntoIterator>::into_iter(input)
+			.map(|byte| self.filter_byte(byte, output))
+			.try_fold(0, |acc, x|
+				match x {
+					Ok(b) => Ok(acc + b),
+					Err(Waiting) => Ok(acc),
+					e => e,
+				})?;
+
+		Ok(subtotal + self.finish(output)?)
+	}
+
+
+	fn filter_iter_to_vec<I: IntoIterator<Item=u8>>(&mut self, input: I) -> BcResult<Vec<u8>> {
+		let mut output = Vec::new();
+		let bytes_written = self.filter_iter(input, &mut output)?;
+		output.truncate(bytes_written);
+		Ok(output)
 	}
 
 
 	fn filter_slice_to_vec(&mut self, input: &[u8]) -> BcResult<Vec<u8>> {
-		let mut output = vec![];
-		let bytes_written = self.filter_slice(input, &mut output)?;
-		output.truncate(bytes_written);
-		Ok(output)
+		self.filter_iter_to_vec(input.iter().copied())
 	}
 }
 
