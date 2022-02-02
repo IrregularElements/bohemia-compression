@@ -1,0 +1,13 @@
+[package]
+name = "bohemia-compression"
+version = "0.0.1-dev"
+edition = "2021"
+
+[features]
+default = []
+
+[dependencies]
+derive_more = "0.99"
+bitvec = "1.0"
+libc = "0.2"
+itertools = "0.10"
