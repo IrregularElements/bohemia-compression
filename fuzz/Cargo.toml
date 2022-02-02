@@ -10,6 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+libc = "0.2"
 arbitrary = { version = "1.0" }
 
 [dependencies.bohemia-compression]
@@ -22,5 +23,11 @@ members = ["."]
 [[bin]]
 name = "rle"
 path = "fuzz_targets/rle.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "lzss_reader"
+path = "fuzz_targets/lzss_reader.rs"
 test = false
 doc = false

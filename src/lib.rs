@@ -380,3 +380,109 @@ fn test_rle() {
 	assert_eq!(6, result);
 	assert_eq!(wanted, actual.into_inner());
 }
+
+
+#[derive(Debug)]
+enum LzssReaderState {
+	Start,
+	A,
+	B,
+}
+
+
+pub struct LzssReader {
+	state: LzssReaderState,
+	pub flags: libc::c_uint,
+	pub text_buf: [u8; LzssReader::N + LzssReader::F - 1],
+	pub i: libc::c_int,
+	pub j: libc::c_int,
+	pub r: libc::c_int,
+	pub c: libc::c_int,
+}
+
+
+impl LzssReader {
+	const N: usize = 4096;
+	const F: usize = 18;
+	const THRESHOLD: usize = 2;
+}
+
+
+impl Algorithm for LzssReader {
+	fn new() -> Self {
+		let mut result = Self {
+			state: LzssReaderState::Start,
+			flags: 0,
+			text_buf: [0u8; LzssReader::N + LzssReader::F - 1],
+			i: 0,
+			j: 0,
+			r: (Self::N - Self::F) as libc::c_int,
+			c: 0,
+		};
+
+		for i in result.text_buf.iter_mut().take(Self::N - Self::F) {
+			*i = 0x20;
+		};
+
+		result
+	}
+
+
+	fn filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
+		use LzssReaderState::*;
+
+		match &self.state {
+			Start => {
+				self.flags >>= 1;
+
+				self.state = A;
+
+				if self.flags & 0x100 == 0 {
+					self.c = input.into();
+					self.flags = libc::c_uint::from_le_bytes(self.c.to_le_bytes()) | 0xFF00;
+					Err(Waiting)
+				}
+				else {
+					self.filter_byte(input, output)
+				}
+			},
+
+			A => {
+				if self.flags & 1 != 0 {
+					self.c = input.into();
+					let value = (self.c & 0xFF) as u8;
+					output.write_byte(value)?;
+					self.text_buf[self.r as usize] = value;
+					self.r += 1;
+					self.r &= (Self::N - 1) as libc::c_int;
+
+					self.state = LzssReaderState::Start;
+					Ok(1)
+				}
+				else {
+					self.i = input.into();
+					self.state = LzssReaderState::B;
+					Err(Waiting)
+				}
+			},
+
+			B => {
+				self.j = input.into();
+				self.i |= (self.j & 0xF0) << 4;
+				self.j &= 0x0F;
+				self.j += Self::THRESHOLD as libc::c_int;
+
+				for k in 0..=self.j {
+					self.c = self.text_buf[(self.i + k) as usize & (Self::N - 1)] as libc::c_int;
+					output.write_byte(self.c as u8)?;
+					self.text_buf[self.r as usize] = self.c as u8;
+					self.r += 1;
+					self.r &= (Self::N - 1) as libc::c_int;
+				};
+
+				self.state = LzssReaderState::Start;
+				Ok(self.j as usize + 1)
+			},
+		}
+	}
+}

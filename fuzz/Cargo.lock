@@ -36,6 +36,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "bohemia-compression",
+ "libc",
  "libfuzzer-sys",
 ]
 
