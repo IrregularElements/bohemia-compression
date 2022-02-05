@@ -1,9 +1,6 @@
-#![feature(assert_matches)]
-
 
 use std::fmt::Debug;
 use std::io::Cursor;
-#[cfg(test)] use std::assert_matches::assert_matches;
 use derive_more::{Display, Error};
 use itertools::Itertools;
 
@@ -350,35 +347,35 @@ fn test_rle() {
 	let input = vec![0x61, 0x61, 0x84, 0x84, 0x10];
 	let wanted = vec![0x81, 0x61, 0x81, 0x84, 0x00, 0x10];
 	let mut actual = vec![];
-	assert_matches!(writer.filter_byte(input[0], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[1], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[2], &mut actual), Ok(2));
-	assert_matches!(writer.filter_byte(input[3], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[4], &mut actual), Ok(2));
+	assert!(matches!(writer.filter_byte(input[0], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[1], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[2], &mut actual), Ok(2)));
+	assert!(matches!(writer.filter_byte(input[3], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[4], &mut actual), Ok(2)));
 	let result = writer.finish(&mut actual).unwrap();
 	assert_eq!(result, 2);
 	assert_eq!(wanted, actual);
 	let mut uncompressed = vec![];
 	let result = reader.filter_to_end(&mut Cursor::new(actual), &mut uncompressed);
-	assert_matches!(result, Ok(5));
+	assert!(matches!(result, Ok(5)));
 	assert_eq!(input, uncompressed);
 
 	let mut writer = RleWriter::with_minimum_run(3).unwrap();
 	let input = vec![0x41, 0x42, 0x42, 0x43, 0x43, 0x43, 0x44, 0x44, 0x45, 0x46, 0x46, 0x46];
 	let wanted = vec![0x02, 0x41, 0x42, 0x42, 0x82, 0x43, 0x02, 0x44, 0x44, 0x45, 0x82, 0x46];
 	let mut actual = Cursor::new(vec![]);
-	assert_matches!(writer.filter_byte(input[0], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[1], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[2], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[3], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[4], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[5], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[6], &mut actual), Ok(6));
-	assert_matches!(writer.filter_byte(input[7], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[8], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[9], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[10], &mut actual), Err(Waiting));
-	assert_matches!(writer.filter_byte(input[11], &mut actual), Err(Waiting));
+	assert!(matches!(writer.filter_byte(input[0], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[1], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[2], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[3], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[4], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[5], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[6], &mut actual), Ok(6)));
+	assert!(matches!(writer.filter_byte(input[7], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[8], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[9], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[10], &mut actual), Err(Waiting)));
+	assert!(matches!(writer.filter_byte(input[11], &mut actual), Err(Waiting)));
 	let result = writer.finish(&mut actual).unwrap();
 	assert_eq!(6, result);
 	assert_eq!(wanted, actual.into_inner());

@@ -11,3 +11,6 @@ derive_more = "0.99"
 bitvec = "1.0"
 libc = "0.2"
 itertools = "0.10"
+
+[package.metadata]
+msrv = "1.56.0"
