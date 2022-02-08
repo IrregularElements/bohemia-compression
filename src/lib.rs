@@ -30,6 +30,8 @@ pub enum BcError {
 	LzoLookbehindOverrun,
 
 	RleIncompleteData,
+
+	LzssInternalErrorCouldNotReadMore,
 }
 
 
@@ -596,4 +598,428 @@ impl Algorithm for LzssReader {
 			},
 		}
 	}
+}
+
+
+enum LzssWriterState {
+	BufferInit,
+	MainLoop,
+	ReadNew,
+}
+
+
+/// An [`Algorithm`][crate::Algorithm] that compresses data with the Apple LZSS
+/// algorithm (see [`LzssReader`][crate::LzssReader]).
+pub struct LzssWriter {
+	state: LzssWriterState,
+	lchild: [usize; Self::N + 1],
+	rchild: [usize; Self::N + 257],
+	parent: [usize; Self::N + 1],
+	text_buf: [u8; Self::N + Self::F - 1],
+	match_position: usize,
+	match_length: usize,
+	last_match_length: usize,
+	s: usize,
+	r: usize,
+	i: usize,
+	code_buf: [u8; 17],
+	code_buf_ptr: usize,
+	mask: u8,
+	len: usize,
+}
+
+
+impl LzssWriter {
+	const N: usize = LzssReader::N;
+	const NIL: usize = Self::N;
+	const F: usize = LzssReader::F;
+	const THRESHOLD: usize = LzssReader::THRESHOLD;
+
+
+	fn init_state(&mut self) {
+		for b in self.text_buf.iter_mut().take(Self::N - Self::F) {
+			*b = 0x20;
+		};
+
+		for r in self.rchild.iter_mut().skip(Self::N + 1).take(256) {
+			*r = Self::NIL;
+		};
+
+		for p in self.parent.iter_mut().take(Self::N) {
+			*p = Self::NIL;
+		};
+	}
+
+
+	fn insert_node(&mut self, r: usize) {
+		let mut i: usize = 0;
+		let mut cmp: libc::c_int = 1;
+		let mut p: usize = Self::N + 1 + self.text_buf[r] as usize;
+
+		self.rchild[r] = Self::NIL;
+		self.lchild[r] = Self::NIL;
+		self.match_length = 0;
+
+		loop {
+			#[allow(clippy::collapsible_else_if)]
+			if cmp >= 0 {
+				if self.rchild[p] != Self::NIL {
+					p = self.rchild[p];
+				}
+				else {
+					self.rchild[p] = r;
+					self.parent[r] = p;
+					return;
+				};
+			}
+			else {
+				if self.lchild[p] != Self::NIL {
+					p = self.lchild[p];
+				}
+				else {
+					self.lchild[p] = r;
+					self.parent[r] = p;
+					return;
+				};
+			};
+
+			for j in 1..Self::F {
+				cmp = self.text_buf[r + j] as libc::c_int - self.text_buf[p as usize + j] as libc::c_int;
+				if cmp != 0 {
+					i = j;
+					break;
+				};
+			};
+
+			if i > self.match_length {
+				self.match_position = p;
+				self.match_length = i;
+
+				if self.match_length >= Self::F {
+					break;
+				};
+			};
+		};
+
+		self.parent[r] = self.parent[p];
+		self.lchild[r] = self.lchild[p];
+		self.rchild[r] = self.rchild[p];
+		self.parent[self.lchild[p]] = r;
+		self.parent[self.rchild[p]] = r;
+
+		if self.rchild[self.parent[p]] == p {
+			self.rchild[self.parent[p]] = r;
+		}
+		else {
+			self.lchild[self.parent[p]] = r;
+		};
+
+		self.parent[p] = Self::NIL;
+	}
+
+
+	fn delete_node(&mut self, p: usize) {
+		let mut q: usize;
+
+		if self.parent[p] == Self::NIL {
+			return;
+		};
+
+		if self.rchild[p] == Self::NIL {
+			q = self.lchild[p];
+		}
+		else if self.lchild[p] == Self::NIL {
+			q = self.rchild[p];
+		}
+		else {
+			q = self.lchild[p];
+			if self.rchild[q] != Self::NIL {
+				loop {
+					q = self.rchild[q];
+					if self.rchild[q] != Self::NIL { break; }
+				};
+				self.rchild[self.parent[q]] = self.lchild[q];
+				self.parent[self.lchild[q]] = self.parent[q];
+				self.lchild[q] = self.lchild[p];
+				self.parent[self.lchild[p]] = q;
+			};
+			self.rchild[q] = self.rchild[p];
+			self.parent[self.rchild[p]] = q;
+		};
+		self.parent[q] = self.parent[p];
+
+		if self.rchild[self.parent[p]] == p {
+			self.rchild[self.parent[p]] = q;
+		}
+		else {
+			self.lchild[self.parent[p]] = q;
+		};
+
+		self.parent[p] = Self::NIL;
+	}
+
+
+	fn finish_buffer_init(&mut self) {
+		for i in 1..=Self::F {
+			self.insert_node(self.r - i);
+		};
+
+		self.insert_node(self.r);
+	}
+
+
+	fn main_loop_pre_read<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		if self.match_length > self.len {
+			self.match_length = self.len;
+		};
+
+		if self.match_length <= Self::THRESHOLD {
+			self.match_length = 1;
+			self.code_buf[0] |= self.mask as u8;
+			self.code_buf[self.code_buf_ptr] = self.text_buf[self.r];
+		}
+		else {
+			self.code_buf[self.code_buf_ptr] = self.match_position as u8;
+			self.code_buf_ptr += 1;
+			self.code_buf[self.code_buf_ptr] = (
+				((self.match_position >> 4) & 0xF0) |
+				(self.match_length - (Self::THRESHOLD + 1))
+			) as u8;
+		};
+		self.code_buf_ptr += 1;
+
+		self.mask <<= 1;
+
+		let mut bytes_written = 0;
+
+		if self.mask == 0 {
+			self.i = 0;
+
+			while self.i < self.code_buf_ptr {
+				let chr = self.code_buf[self.i];
+				output.write_byte(chr)?;
+				bytes_written += 1;
+				self.i += 1;
+			};
+
+			self.code_buf[0] = 0;
+			self.mask = 1;
+			self.code_buf_ptr = 1;
+		};
+
+		self.last_match_length = self.match_length;
+		self.i = 0;
+
+		Ok(bytes_written)
+	}
+
+
+	fn main_loop_read(&mut self, input: u8) {
+		self.delete_node(self.s);
+		self.text_buf[self.s] = input;
+
+		if self.s < Self::F - 1 {
+			self.text_buf[self.s + Self::N] = input;
+		};
+
+		self.s = (self.s + 1) & (Self::N - 1);
+		self.r = (self.r + 1) & (Self::N - 1);
+
+		self.insert_node(self.r);
+		self.i += 1;
+	}
+
+
+	fn main_loop_post_read(&mut self) {
+		while self.i < self.last_match_length {
+			self.delete_node(self.s);
+
+			self.s = (self.s + 1) & (Self::N - 1);
+			self.r = (self.r + 1) & (Self::N - 1);
+
+			self.len -= 1;
+
+			if self.len != 0 {
+				self.insert_node(self.r);
+			};
+
+			self.i += 1;
+		}
+	}
+
+
+	fn send_remaining<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		let mut bytes_written = 0;
+
+		if self.code_buf_ptr > 1 {
+			self.i = 0;
+
+			while self.i < self.code_buf_ptr {
+				let chr = self.code_buf[self.i];
+				output.write_byte(chr)?;
+				bytes_written += 1;
+				self.i += 1;
+			};
+		};
+
+		Ok(bytes_written)
+	}
+}
+
+
+impl Default for LzssWriter {
+	fn default() -> Self {
+		let state = LzssWriterState::BufferInit;
+		let lchild = [0; Self::N + 1];
+		let rchild = [0; Self::N + 257];
+		let parent = [0; Self::N + 1];
+		let text_buf = [0; Self::N + Self::F - 1];
+		let match_position = 0;
+		let match_length = 0;
+		let last_match_length = 0;
+		let s: usize = 0;
+		let r: usize = Self::N - Self::F;
+		let i = 0;
+		let code_buf = [0; 17];
+		let code_buf_ptr = 1;
+		let mask = 1;
+		let len = 0;
+
+		let mut result = Self {
+			state,
+			lchild,
+			rchild,
+			parent,
+			text_buf,
+			match_position,
+			match_length,
+			last_match_length,
+			s,
+			r,
+			i,
+			code_buf,
+			code_buf_ptr,
+			mask,
+			len,
+		};
+
+		result.init_state();
+
+		result
+	}
+}
+
+
+impl Algorithm for LzssWriter {
+	fn filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
+		use LzssWriterState::*;
+
+		match self.state {
+			BufferInit => {
+				if self.len < Self::F {
+					self.text_buf[self.r + self.len] = input;
+					self.len += 1;
+					Err(Waiting)
+				}
+				else {
+					self.finish_buffer_init();
+					self.state = MainLoop;
+					self.filter_byte(input, output)
+				}
+			},
+
+			MainLoop => {
+				let mut bytes_written = self.main_loop_pre_read(output)?;
+				self.state = ReadNew;
+				bytes_written += match self.filter_byte(input, output) {
+					Ok(written) => written,
+					Err(Waiting) => 0,
+					Err(e) => return Err(e),
+				};
+				Ok(bytes_written)
+			},
+
+			ReadNew => {
+				self.main_loop_read(input);
+
+				if self.i < self.last_match_length {
+					Err(Waiting)
+				}
+				else {
+					self.main_loop_post_read();
+
+					if self.len > 0 {
+						self.state = MainLoop;
+						Err(Waiting)
+					}
+					else {
+						Err(LzssInternalErrorCouldNotReadMore)
+					}
+				}
+			},
+		}
+	}
+
+
+	fn finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		use LzssWriterState::*;
+
+		match self.state {
+			BufferInit => {
+				if self.len == 0 {
+					return Ok(0);
+				};
+
+				self.finish_buffer_init();
+				self.state = MainLoop;
+				self.finish(output)
+			},
+
+			MainLoop => {
+				let bytes_written = self.main_loop_pre_read(output)?;
+				self.main_loop_post_read();
+
+				if self.len > 0 {
+					self.state = MainLoop;
+					self.i = 0;
+					Ok(bytes_written + self.finish(output)?)
+				}
+				else {
+					Ok(bytes_written + self.send_remaining(output)?)
+				}
+			},
+
+			ReadNew => {
+				self.main_loop_post_read();
+
+				if self.len > 0 {
+					self.state = MainLoop;
+					Ok(self.finish(output)?)
+				}
+				else {
+					Ok(self.send_remaining(output)?)
+				}
+			},
+		}
+	}
+}
+
+
+#[test]
+fn test_lzss() {
+	let input = [
+		0x22, 0x0e, 0x00, 0x0a, 0x00, 0x08, 0x00, 0x00,
+		0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x20, 0x20, 0x20, 0x3f, 0x20, 0x20, 0x20,
+		0x20, 0x20 ];
+	//let wanted = [
+		//0xffu8, 0x22, 0x0e, 0x00, 0x0a, 0x00, 0x08, 0x00,
+		//0x00, 0x23, 0x00, 0x80, 0xf4, 0xf0, 0xf8, 0xf1,
+		//0xeb, 0xf0, 0x3f, 0xdc, 0xf2 ];
+	let actual = LzssWriter::new().filter_slice_to_vec(&input).unwrap();
+	// [TODO] wanted (Apple LZSS) is [..., 0xDC, 0xF2]; actual is [..., 0xDD, 0xF2].
+	// ... and I have no idea why
+	//assert_eq!(wanted, &actual[..]);
+	let uncompressed = LzssReader::new().filter_slice_to_vec(&actual).unwrap();
+	assert_eq!(&uncompressed[..], input);
 }

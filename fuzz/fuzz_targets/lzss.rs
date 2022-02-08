@@ -1,6 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use bohemia_compression::{Algorithm, LzssReader};
+use bohemia_compression::{Algorithm, LzssReader, LzssWriter};
 
 
 #[allow(unused_variables)]
@@ -65,6 +65,12 @@ fn decompress_lzss_slice(input: &[u8]) -> Vec<u8> {
 
 
 fuzz_target!(|data: &[u8]| {
+	let compressed_data = LzssWriter::new().filter_slice_to_vec(data).unwrap();
+	let uncompressed_data = LzssReader::new().filter_slice_to_vec(&compressed_data[..]).unwrap();
+	assert_eq!(uncompressed_data, data);
+	let uncompressed_data_apple = decompress_lzss_slice(&compressed_data[..]);
+	assert_eq!(uncompressed_data_apple, data);
+
 	let bc_data = LzssReader::new().filter_slice_to_vec(data).unwrap();
 	let apple_data = decompress_lzss_slice(data);
 	assert_eq!(bc_data, apple_data);

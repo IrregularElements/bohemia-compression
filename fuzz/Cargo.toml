@@ -28,7 +28,7 @@ test = false
 doc = false
 
 [[bin]]
-name = "lzss_reader"
-path = "fuzz_targets/lzss_reader.rs"
+name = "lzss"
+path = "fuzz_targets/lzss.rs"
 test = false
 doc = false
