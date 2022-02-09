@@ -25,7 +25,6 @@ pub enum BcError {
 	LzoOutputOverrun,
 	LzoLookbehindOverrun,
 
-	RleIncorrectMinimumRunValue,
 	RleIncompleteData,
 }
 
@@ -252,13 +251,11 @@ impl RleWriter {
 	/// Create an RleWriter algorithm instance which requires a contiguous run
 	/// of `minimum_run` elements to encode it as RLE.  The default is 2,
 	/// TIFF PackBits (which this implementation is similar to, but incompatible
-	/// with) uses 3.  `minimum_run` must be in the (inclusive) range of [1, 121].
-	pub fn with_minimum_run(minimum_run: usize) -> BcResult<Self> {
-		if !(1..=0x79_usize).contains(&minimum_run) {
-			return Err(RleIncorrectMinimumRunValue);
-		};
+	/// with) uses 3.  `minimum_run` is clamped to [1, 128].
+	pub fn with_minimum_run(minimum_run: usize) -> Self {
+		let minimum_run = std::cmp::min(0x80, std::cmp::max(1, minimum_run));
 
-		Ok(Self { minimum_run, .. Self::new() })
+		Self { minimum_run, .. Self::new() }
 	}
 }
 
@@ -352,7 +349,7 @@ fn test_rle() {
 	assert_eq!(vec![0u8; 0], RleWriter::new().filter_slice_to_vec(&vec![][..]).unwrap());
 	assert_eq!(vec![0x00u8, 0x41], RleWriter::new().filter_slice_to_vec(&vec![0x41u8][..]).unwrap());
 
-	let mut writer = RleWriter::with_minimum_run(2).unwrap();
+	let mut writer = RleWriter::with_minimum_run(2);
 	let mut reader = RleReader::new();
 	let input = vec![0x61, 0x61, 0x84, 0x84, 0x10];
 	let wanted = vec![0x81, 0x61, 0x81, 0x84, 0x00, 0x10];
@@ -370,7 +367,7 @@ fn test_rle() {
 	assert!(matches!(result, Ok(5)));
 	assert_eq!(input, uncompressed);
 
-	let mut writer = RleWriter::with_minimum_run(3).unwrap();
+	let mut writer = RleWriter::with_minimum_run(3);
 	let input = vec![0x41, 0x42, 0x42, 0x43, 0x43, 0x43, 0x44, 0x44, 0x45, 0x46, 0x46, 0x46];
 	let wanted = vec![0x02, 0x41, 0x42, 0x42, 0x82, 0x43, 0x02, 0x44, 0x44, 0x45, 0x82, 0x46];
 	let mut actual = Cursor::new(vec![]);

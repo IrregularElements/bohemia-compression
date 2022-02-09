@@ -35,7 +35,7 @@ fuzz_target!(|input: (RleMinimumRunFuzzer, &[u8])| {
 	let (minimum_run, data) = input;
 	let mut input_cursor = Cursor::new(data);
 	let mut compressed_data = Vec::<u8>::new();
-	let mut writer = RleWriter::with_minimum_run(minimum_run.into()).unwrap();
+	let mut writer = RleWriter::with_minimum_run(minimum_run.into());
 	writer.filter_to_end(&mut input_cursor, &mut compressed_data).unwrap();
 
 	let mut compressed_data_cursor = Cursor::new(compressed_data);
