@@ -31,10 +31,10 @@ pub enum BcError {
 
 
 /// A general trait that represents a compression or a decompression algorithm.
-pub trait Algorithm {
+pub trait Algorithm : Default {
 	/// Create a new instance of the algorithm in its initial state (i.e., ready
 	/// to read input data from the beginning).
-	fn new() -> Self;
+	fn new() -> Self { <Self as Default>::default() }
 
 
 	/// Receive one byte of input data, process it, and possibly write one or
@@ -148,21 +148,34 @@ pub enum RleReaderState {
 }
 
 
+impl Default for RleReaderState {
+	fn default() -> Self { Self::BlockStart }
+}
+
+
 pub struct RleReader {
 	pub state: RleReaderState,
 	pub data_buffer: Vec<u8>,
 }
 
 
-impl Algorithm for RleReader {
-	fn new() -> Self {
+impl RleReader {
+	pub const MAX_BLOCK_SIZE: usize = RleWriter::MAX_BLOCK_SIZE;
+	pub const RLE_FLAG: u8 = RleWriter::RLE_FLAG;
+}
+
+
+impl Default for RleReader {
+	fn default() -> Self {
 		Self {
 			state: RleReaderState::BlockStart,
 			data_buffer: Vec::with_capacity(0x80),
 		}
 	}
+}
 
 
+impl Algorithm for RleReader {
 	fn filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
 		use RleReaderState::*;
 
@@ -224,12 +237,6 @@ impl Algorithm for RleReader {
 }
 
 
-impl RleReader {
-	pub const MAX_BLOCK_SIZE: usize = RleWriter::MAX_BLOCK_SIZE;
-	pub const RLE_FLAG: u8 = RleWriter::RLE_FLAG;
-}
-
-
 pub struct RleWriter {
 	pub data_buffer: Vec<u8>,
 	pub current_run: (u8, usize),
@@ -237,15 +244,37 @@ pub struct RleWriter {
 }
 
 
-impl Algorithm for RleWriter {
-	fn new() -> Self {
+impl RleWriter {
+	pub const MAX_BLOCK_SIZE: usize = 0x80;
+	pub const RLE_FLAG: u8 = 0x80;
+
+
+	/// Create an RleWriter algorithm instance which requires a contiguous run
+	/// of `minimum_run` elements to encode it as RLE.  The default is 2,
+	/// TIFF PackBits (which this implementation is similar to, but incompatible
+	/// with) uses 3.  `minimum_run` must be in the (inclusive) range of [1, 121].
+	pub fn with_minimum_run(minimum_run: usize) -> BcResult<Self> {
+		if !(1..=0x79_usize).contains(&minimum_run) {
+			return Err(RleIncorrectMinimumRunValue);
+		};
+
+		Ok(Self { minimum_run, .. Self::new() })
+	}
+}
+
+
+impl Default for RleWriter {
+	fn default() -> Self {
 		Self {
 			data_buffer: Vec::with_capacity(Self::MAX_BLOCK_SIZE),
 			current_run: (0, 0),
 			minimum_run: 2,
 		}
 	}
+}
 
+
+impl Algorithm for RleWriter {
 	fn filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
 		use BcError::*;
 
@@ -314,25 +343,6 @@ impl Algorithm for RleWriter {
 		*run_size = 0;
 
 		Ok(bytes_written)
-	}
-}
-
-
-impl RleWriter {
-	pub const MAX_BLOCK_SIZE: usize = 0x80;
-	pub const RLE_FLAG: u8 = 0x80;
-
-
-	/// Create an RleWriter algorithm instance which requires a contiguous run
-	/// of `minimum_run` elements to encode it as RLE.  The default is 2,
-	/// TIFF PackBits (which this implementation is similar to, but incompatible
-	/// with) uses 3.  `minimum_run` must be in the (inclusive) range of [1, 121].
-	pub fn with_minimum_run(minimum_run: usize) -> BcResult<Self> {
-		if !(1..=0x79_usize).contains(&minimum_run) {
-			return Err(RleIncorrectMinimumRunValue);
-		};
-
-		Ok(Self { minimum_run, .. Self::new() })
 	}
 }
 
@@ -408,8 +418,8 @@ impl LzssReader {
 }
 
 
-impl Algorithm for LzssReader {
-	fn new() -> Self {
+impl Default for LzssReader {
+	fn default() -> Self {
 		let mut result = Self {
 			state: LzssReaderState::Start,
 			flags: 0,
@@ -426,8 +436,10 @@ impl Algorithm for LzssReader {
 
 		result
 	}
+}
 
 
+impl Algorithm for LzssReader {
 	fn filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
 		use LzssReaderState::*;
 
