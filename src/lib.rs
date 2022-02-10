@@ -367,6 +367,12 @@ fn test_rle() {
 	assert!(matches!(result, Ok(5)));
 	assert_eq!(input, uncompressed);
 
+	for r in 0..=256 {
+		let compressed = RleWriter::with_minimum_run(r).filter_slice_to_vec(&input[..]).unwrap();
+		let uncompressed = RleReader::new().filter_slice_to_vec(&compressed[..]).unwrap();
+		assert_eq!(input, uncompressed);
+	}
+
 	let mut writer = RleWriter::with_minimum_run(3);
 	let input = vec![0x41, 0x42, 0x42, 0x43, 0x43, 0x43, 0x44, 0x44, 0x45, 0x46, 0x46, 0x46];
 	let wanted = vec![0x02, 0x41, 0x42, 0x42, 0x82, 0x43, 0x02, 0x44, 0x44, 0x45, 0x82, 0x46];
@@ -386,6 +392,12 @@ fn test_rle() {
 	let result = writer.finish(&mut actual).unwrap();
 	assert_eq!(6, result);
 	assert_eq!(wanted, actual.into_inner());
+
+	for r in 0..=256 {
+		let compressed = RleWriter::with_minimum_run(r).filter_slice_to_vec(&input[..]).unwrap();
+		let uncompressed = RleReader::new().filter_slice_to_vec(&compressed[..]).unwrap();
+		assert_eq!(input, uncompressed);
+	}
 }
 
 
