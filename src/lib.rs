@@ -18,6 +18,8 @@ pub enum BcError {
 
 	Waiting,
 
+	ArithmeticOverflow,
+
 	#[display(fmt = "WriteError({:?})", _0)]
 	WriteError(#[error(ignore)] std::io::ErrorKind),
 	WriteEof,
@@ -78,14 +80,15 @@ pub trait Algorithm : Default {
 	fn filter_iter<I: IntoIterator<Item=u8>, W: Write>(&mut self, input: I, output: &mut W) -> BcResult<usize> {
 		let subtotal: usize = <I as IntoIterator>::into_iter(input)
 			.map(|byte| self.filter_byte(byte, output))
-			.try_fold(0, |acc, x|
+			.try_fold(0, |acc: usize, x|
 				match x {
-					Ok(b) => Ok(acc + b),
+					Ok(b) => acc.checked_add(b).ok_or(ArithmeticOverflow),
 					Err(Waiting) => Ok(acc),
 					e => e,
 				})?;
 
-		Ok(subtotal + self.finish(output)?)
+		let total = subtotal.checked_add(self.finish(output)?).ok_or(ArithmeticOverflow)?;
+		Ok(total)
 	}
 
 
