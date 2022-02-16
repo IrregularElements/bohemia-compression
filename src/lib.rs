@@ -652,40 +652,46 @@ impl LzssWriter {
 
 
 	fn insert_node(&mut self, r: usize) {
-		let mut i: usize = 0;
-		let mut cmp: libc::c_int = 1;
-		let mut p: usize = Self::N + 1 + self.text_buf[r] as usize;
+		use std::cmp::Ordering::*;
 
-		self.rchild[r] = Self::NIL;
-		self.lchild[r] = Self::NIL;
+		let mut i: usize = 0;
+		let mut cmp: std::cmp::Ordering = Greater;
+		let mut p: usize = Self::N + 1 + self.text_buf[r] as usize;
+		let mut rchild = self.rchild;
+		let mut lchild = self.lchild;
+		let mut parent = self.parent;
+		let text_buf = self.text_buf;
+
+		rchild[r] = Self::NIL;
+		lchild[r] = Self::NIL;
 		self.match_length = 0;
 
 		loop {
 			#[allow(clippy::collapsible_else_if)]
-			if cmp >= 0 {
-				if self.rchild[p] != Self::NIL {
-					p = self.rchild[p];
+			if cmp.is_ge() {
+				if rchild[p] != Self::NIL {
+					p = rchild[p];
 				}
 				else {
-					self.rchild[p] = r;
-					self.parent[r] = p;
+					rchild[p] = r;
+					parent[r] = p;
 					return;
 				};
 			}
 			else {
-				if self.lchild[p] != Self::NIL {
-					p = self.lchild[p];
+				if lchild[p] != Self::NIL {
+					p = lchild[p];
 				}
 				else {
-					self.lchild[p] = r;
-					self.parent[r] = p;
+					lchild[p] = r;
+					parent[r] = p;
 					return;
 				};
 			};
 
 			for j in 1..Self::F {
-				cmp = self.text_buf[r + j] as libc::c_int - self.text_buf[p as usize + j] as libc::c_int;
-				if cmp != 0 {
+				cmp = text_buf[r + j].cmp(&text_buf[p + j]);
+				if cmp.is_ne() {
 					i = j;
 					break;
 				};
@@ -701,20 +707,24 @@ impl LzssWriter {
 			};
 		};
 
-		self.parent[r] = self.parent[p];
-		self.lchild[r] = self.lchild[p];
-		self.rchild[r] = self.rchild[p];
-		self.parent[self.lchild[p]] = r;
-		self.parent[self.rchild[p]] = r;
+		parent[r] = parent[p];
+		lchild[r] = lchild[p];
+		rchild[r] = rchild[p];
+		parent[lchild[p]] = r;
+		parent[rchild[p]] = r;
 
-		if self.rchild[self.parent[p]] == p {
-			self.rchild[self.parent[p]] = r;
+		if rchild[parent[p]] == p {
+			rchild[parent[p]] = r;
 		}
 		else {
-			self.lchild[self.parent[p]] = r;
+			lchild[parent[p]] = r;
 		};
 
-		self.parent[p] = Self::NIL;
+		parent[p] = Self::NIL;
+
+		self.parent = parent;
+		self.lchild = lchild;
+		self.rchild = rchild;
 	}
 
 
