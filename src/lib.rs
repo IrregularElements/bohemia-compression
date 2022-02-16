@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "checked_write", feature(min_specialization))]
+
 
 use std::fmt::Debug;
 use std::io::Cursor;
@@ -51,13 +53,73 @@ pub trait Algorithm : Default {
 	#[allow(unused_variables)]
 	fn finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> { Ok(0) }
 
+	#[doc(hidden)]
+	#[cfg_attr(not(feature = "checked_write"), allow(unused_variables, clippy::let_and_return))]
+	fn __filter_byte<W: Write>(&mut self, input: u8, output: &mut W) -> BcResult<usize> {
+		#[cfg(feature = "checked_write")]
+		let prev_pos = output.get_pos();
+
+		let result = self.filter_byte(input, output);
+
+		#[cfg(feature = "checked_write")]
+		let next_pos = output.get_pos();
+
+		#[cfg(feature = "checked_write")]
+		{
+			let written = match &result {
+				Ok(written) => Some(*written),
+				Err(Waiting) => Some(0),
+				Err(_) => None,
+			};
+
+			if let (Some(prev), Some(next), Some(written)) = (prev_pos, next_pos, written) {
+				assert_eq!(prev + written, next,
+					"{}::filter_byte returned an incorrect value: returned {}, actually wrote {}",
+					std::any::type_name::<Self>(), written, next-prev);
+			};
+		};
+
+		result
+	}
+
+
+	#[doc(hidden)]
+	#[cfg_attr(not(feature = "checked_write"), allow(unused_variables, clippy::let_and_return))]
+	fn __finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		#[cfg(feature = "checked_write")]
+		let prev_pos = output.get_pos();
+
+		let result = self.finish(output);
+
+		#[cfg(feature = "checked_write")]
+		let next_pos = output.get_pos();
+
+		#[cfg(feature = "checked_write")]
+		{
+			let written = match &result {
+				Ok(written) => Some(*written),
+				Err(Waiting) => panic!("{}::finish returned Err(Waiting)", std::any::type_name::<Self>()),
+				Err(_) => None,
+			};
+
+			if let (Some(prev), Some(next), Some(written)) = (prev_pos, next_pos, written) {
+				assert_eq!(prev + written, next,
+					"{}::finish returned an incorrect value: returned {}, actually wrote {}",
+					std::any::type_name::<Self>(), written, next-prev);
+			};
+		};
+
+		result
+	}
+
+
 	fn filter_to_end<R: Read, W: Write>(&mut self, input: &mut R, output: &mut W) -> BcResult<usize> {
 		let mut bytes_written: usize = 0;
 
 		loop {
 			match input.read_byte() {
 				Ok(b) => {
-					let result = self.filter_byte::<W>(b, output);
+					let result = self.__filter_byte::<W>(b, output);
 
 					match result {
 						Ok(bytes) => { bytes_written += bytes },
@@ -67,7 +129,7 @@ pub trait Algorithm : Default {
 				},
 
 				Err(ReadEof) => {
-					bytes_written += self.finish::<W>(output)?;
+					bytes_written += self.__finish::<W>(output)?;
 					return Ok(bytes_written);
 				},
 
@@ -79,7 +141,7 @@ pub trait Algorithm : Default {
 
 	fn filter_iter<I: IntoIterator<Item=u8>, W: Write>(&mut self, input: I, output: &mut W) -> BcResult<usize> {
 		let subtotal: usize = <I as IntoIterator>::into_iter(input)
-			.map(|byte| self.filter_byte(byte, output))
+			.map(|byte| self.__filter_byte(byte, output))
 			.try_fold(0, |acc: usize, x|
 				match x {
 					Ok(b) => acc.checked_add(b).ok_or(ArithmeticOverflow),
@@ -87,14 +149,14 @@ pub trait Algorithm : Default {
 					e => e,
 				})?;
 
-		let total = subtotal.checked_add(self.finish(output)?).ok_or(ArithmeticOverflow)?;
+		let total = subtotal.checked_add(self.__finish(output)?).ok_or(ArithmeticOverflow)?;
 		Ok(total)
 	}
 
 
 	fn filter_iter_to_vec<I: IntoIterator<Item=u8>>(&mut self, input: I) -> BcResult<Vec<u8>> {
 		let mut output = Vec::new();
-		let bytes_written = self.filter_iter(input, &mut output)?;
+		let bytes_written = self.filter_iter::<I, Vec<u8>>(input, &mut output)?;
 		output.truncate(bytes_written);
 		Ok(output)
 	}
@@ -133,6 +195,8 @@ impl<T: std::io::Read> Read for T {
 
 pub trait Write {
 	fn write_byte(&mut self, byte: u8) -> BcResult<()>;
+	#[cfg(feature = "checked_write")]
+	fn get_pos(&self) -> Option<usize>;
 }
 
 
@@ -152,6 +216,16 @@ impl<T: std::io::Write> Write for T {
 			Err(WriteEof)
 		}
 	}
+
+
+	#[cfg(feature = "checked_write")]
+	default fn get_pos(&self) -> Option<usize> { None }
+}
+
+
+#[cfg(feature = "checked_write")]
+impl Write for Vec<u8> {
+	fn get_pos(&self) -> Option<usize> { Some(self.len()) }
 }
 
 
