@@ -170,6 +170,28 @@ pub trait Algorithm : Default {
 }
 
 
+#[test]
+#[cfg(feature = "checked_write")]
+#[should_panic(expected = "finish returned an incorrect value: returned 1, actually wrote 0")]
+fn checked_write() {
+	#[derive(Default)]
+	struct BuggyAlgorithm {}
+
+	impl Algorithm for BuggyAlgorithm {
+		fn filter_byte<W: Write>(&mut self, _: u8, _: &mut W) -> BcResult<usize> {
+			Ok(1) // wrong bytes_written reported, but won't be called on empty input
+		}
+
+
+		fn finish<W: Write>(&mut self, _: &mut W) -> BcResult<usize> {
+			Ok(1) // wrong bytes_written reported, will be called, must panic
+		}
+	}
+
+	BuggyAlgorithm::new().filter_slice_to_vec(&[]).unwrap();
+}
+
+
 pub trait Read {
 	fn read_byte(&mut self) -> BcResult<u8>;
 }
