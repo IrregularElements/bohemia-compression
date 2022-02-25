@@ -523,6 +523,8 @@ enum LzssReaderState {
 }
 
 
+/// An [`Algorithm`][crate::Algorithm] that reads BI LZSS and produces
+/// uncompressed data.
 pub struct LzssReader {
 	state: LzssReaderState,
 	pub flags: libc::c_uint,
@@ -530,34 +532,28 @@ pub struct LzssReader {
 	pub i: libc::c_int,
 	pub j: libc::c_int,
 	pub r: libc::c_int,
-	pub c: libc::c_int,
+	pub c: u8,
 }
 
 
 impl LzssReader {
 	const N: usize = 4096;
-	const F: usize = 18;
+	const F: usize = 16;
 	const THRESHOLD: usize = 2;
 }
 
 
 impl Default for LzssReader {
 	fn default() -> Self {
-		let mut result = Self {
+		Self {
 			state: LzssReaderState::Start,
 			flags: 0,
-			text_buf: [0u8; LzssReader::N + LzssReader::F - 1],
+			text_buf: [0x20u8; LzssReader::N + LzssReader::F - 1],
 			i: 0,
 			j: 0,
-			r: (Self::N - Self::F) as libc::c_int,
+			r: 0,
 			c: 0,
-		};
-
-		for i in result.text_buf.iter_mut().take(Self::N - Self::F) {
-			*i = 0x20;
-		};
-
-		result
+		}
 	}
 }
 
@@ -573,8 +569,8 @@ impl Algorithm for LzssReader {
 				self.state = A;
 
 				if self.flags & 0x100 == 0 {
-					self.c = input.into();
-					self.flags = libc::c_uint::from_le_bytes(self.c.to_le_bytes()) | 0xFF00;
+					self.c = input;
+					self.flags = self.c as u32 | 0xFF00;
 					Err(Waiting)
 				}
 				else {
@@ -584,10 +580,9 @@ impl Algorithm for LzssReader {
 
 			A => {
 				if self.flags & 1 != 0 {
-					self.c = input.into();
-					let value = (self.c & 0xFF) as u8;
-					output.write_byte(value)?;
-					self.text_buf[self.r as usize] = value;
+					self.c = input;
+					output.write_byte(self.c)?;
+					self.text_buf[self.r as usize] = self.c;
 					self.r += 1;
 					self.r &= (Self::N - 1) as libc::c_int;
 
@@ -607,8 +602,10 @@ impl Algorithm for LzssReader {
 				self.j &= 0x0F;
 				self.j += Self::THRESHOLD as libc::c_int;
 
+				let pr = self.r;
+
 				for k in 0..=self.j {
-					self.c = self.text_buf[(self.i + k) as usize & (Self::N - 1)] as libc::c_int;
+					self.c = self.text_buf[(pr - self.i + k) as usize & (Self::N - 1)];
 					output.write_byte(self.c as u8)?;
 					self.text_buf[self.r as usize] = self.c as u8;
 					self.r += 1;
@@ -630,7 +627,7 @@ enum LzssWriterState {
 }
 
 
-/// An [`Algorithm`][crate::Algorithm] that compresses data with the Apple LZSS
+/// An [`Algorithm`][crate::Algorithm] that compresses data with the BI LZSS
 /// algorithm (see [`LzssReader`][crate::LzssReader]).
 pub struct LzssWriter {
 	state: LzssWriterState,

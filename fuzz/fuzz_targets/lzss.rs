@@ -7,14 +7,14 @@ use bohemia_compression::{Algorithm, LzssReader, LzssWriter};
 fn decompress_lzss_slice(input: &[u8]) -> Vec<u8> {
 	// See https://opensource.apple.com/source/xnu/xnu-201/libsa/mkext.c.auto.html
 	const N: usize = 4096;
-	const F: usize = 18;
+	const F: usize = 16;
 	const THRESHOLD: usize = 2;
 
 	let mut dst_buf: Vec<u8> = Vec::new();
 	let mut src: usize = 0;
 	let srcend = input.len();
 
-	let mut text_buf = [0u8; N + F - 1];
+	let mut text_buf = [0x20u8; N + F - 1];
 
 	let mut i: libc::c_int;
 	let mut j: libc::c_int;
@@ -22,11 +22,6 @@ fn decompress_lzss_slice(input: &[u8]) -> Vec<u8> {
 	let mut r: libc::c_int = (N - F) as libc::c_int;
 	let mut c: libc::c_int;
 	let mut flags: libc::c_uint = 0;
-
-	#[allow(clippy::needless_range_loop)]
-	for i in 0..N-F {
-		text_buf[i] = 0x20;
-	}
 
 	loop {
 		flags >>= 1;
@@ -50,8 +45,10 @@ fn decompress_lzss_slice(input: &[u8]) -> Vec<u8> {
 			i |= (j & 0xF0) << 4;
 			j = (j & 0x0F) + THRESHOLD as libc::c_int;
 
+			let pr = r;
+
 			for k in 0..=j {
-				c = text_buf[(i + k) as usize & (N - 1)] as libc::c_int;
+				c = text_buf[(pr - i + k) as usize & (N - 1)] as libc::c_int;
 				dst_buf.push(c as u8);
 				text_buf[r as usize] = c as u8;
 				r += 1;
