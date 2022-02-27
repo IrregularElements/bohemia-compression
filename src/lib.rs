@@ -12,6 +12,15 @@ use BcError::*;
 pub type BcResult<T> = std::result::Result<T, BcError>;
 
 
+pub(crate) fn bcresult_to_bytes_written(result: &BcResult<usize>) -> BcResult<usize> {
+	match result {
+		Ok(bytes_written) => Ok(*bytes_written),
+		Err(Waiting) => Ok(0),
+		Err(e) => Err(*e),
+	}
+}
+
+
 #[derive(Debug, Display, Clone, Copy, Error)]
 pub enum BcError {
 	#[display(fmt = "ReadError({:?})", _0)]
@@ -68,13 +77,9 @@ pub trait Algorithm : Default {
 
 		#[cfg(feature = "checked_write")]
 		{
-			let written = match &result {
-				Ok(written) => Some(*written),
-				Err(Waiting) => Some(0),
-				Err(_) => None,
-			};
+			let written = bcresult_to_bytes_written(&result);
 
-			if let (Some(prev), Some(next), Some(written)) = (prev_pos, next_pos, written) {
+			if let (Some(prev), Some(next), Ok(written)) = (prev_pos, next_pos, written) {
 				assert_eq!(prev + written, next,
 					"{}::filter_byte returned an incorrect value: returned {}, actually wrote {}",
 					std::any::type_name::<Self>(), written, next-prev);
@@ -98,13 +103,9 @@ pub trait Algorithm : Default {
 
 		#[cfg(feature = "checked_write")]
 		{
-			let written = match &result {
-				Ok(written) => Some(*written),
-				Err(Waiting) => panic!("{}::finish returned Err(Waiting)", std::any::type_name::<Self>()),
-				Err(_) => None,
-			};
+			let written = bcresult_to_bytes_written(&result);
 
-			if let (Some(prev), Some(next), Some(written)) = (prev_pos, next_pos, written) {
+			if let (Some(prev), Some(next), Ok(written)) = (prev_pos, next_pos, written) {
 				assert_eq!(prev + written, next,
 					"{}::finish returned an incorrect value: returned {}, actually wrote {}",
 					std::any::type_name::<Self>(), written, next-prev);
@@ -122,12 +123,7 @@ pub trait Algorithm : Default {
 			match input.read_byte() {
 				Ok(b) => {
 					let result = self.__filter_byte::<W>(b, output);
-
-					match result {
-						Ok(bytes) => { bytes_written += bytes },
-						Err(Waiting) => (),
-						Err(e) => return Err(e),
-					};
+					bytes_written += bcresult_to_bytes_written(&result)?;
 				},
 
 				Err(ReadEof) => {
@@ -960,11 +956,7 @@ impl Algorithm for LzssWriter {
 			MainLoop => {
 				let mut bytes_written = self.main_loop_pre_read(output)?;
 				self.state = ReadNew;
-				bytes_written += match self.filter_byte(input, output) {
-					Ok(written) => written,
-					Err(Waiting) => 0,
-					Err(e) => return Err(e),
-				};
+				bytes_written += bcresult_to_bytes_written(&self.filter_byte(input, output))?;
 				Ok(bytes_written)
 			},
 
