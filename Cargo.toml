@@ -10,5 +10,4 @@ checked_write = []
 
 [dependencies]
 derive_more = "0.99.17"
-libc = "0.2.117"
 itertools = "0.10.3"

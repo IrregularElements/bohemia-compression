@@ -527,11 +527,11 @@ enum LzssReaderState {
 /// uncompressed data.
 pub struct LzssReader {
 	state: LzssReaderState,
-	pub flags: libc::c_uint,
+	pub flags: u32,
 	pub text_buf: [u8; LzssReader::N + LzssReader::F - 1],
-	pub i: libc::c_int,
-	pub j: libc::c_int,
-	pub r: libc::c_int,
+	pub i: i32,
+	pub j: i32,
+	pub r: i32,
 	pub c: u8,
 }
 
@@ -584,7 +584,7 @@ impl Algorithm for LzssReader {
 					output.write_byte(self.c)?;
 					self.text_buf[self.r as usize] = self.c;
 					self.r += 1;
-					self.r &= (Self::N - 1) as libc::c_int;
+					self.r &= (Self::N - 1) as i32;
 
 					self.state = LzssReaderState::Start;
 					Ok(1)
@@ -600,7 +600,7 @@ impl Algorithm for LzssReader {
 				self.j = input.into();
 				self.i |= (self.j & 0xF0) << 4;
 				self.j &= 0x0F;
-				self.j += Self::THRESHOLD as libc::c_int;
+				self.j += Self::THRESHOLD as i32;
 
 				let pr = self.r;
 
@@ -609,7 +609,7 @@ impl Algorithm for LzssReader {
 					output.write_byte(self.c as u8)?;
 					self.text_buf[self.r as usize] = self.c as u8;
 					self.r += 1;
-					self.r &= (Self::N - 1) as libc::c_int;
+					self.r &= (Self::N - 1) as i32;
 				};
 
 				self.state = LzssReaderState::Start;
