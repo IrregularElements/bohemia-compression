@@ -62,7 +62,7 @@ pub trait Algorithm : Default {
 	/// If the algorithm needs to wait for further data because its internal
 	/// state is incomplete, it will return an appropriate error.
 	#[allow(unused_variables)]
-	fn finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> { Ok(0) }
+	fn finish<W: Write>(self, output: &mut W) -> BcResult<usize> { Ok(0) }
 
 	#[doc(hidden)]
 	#[cfg_attr(not(feature = "checked_write"), allow(unused_variables, clippy::let_and_return))]
@@ -92,7 +92,7 @@ pub trait Algorithm : Default {
 
 	#[doc(hidden)]
 	#[cfg_attr(not(feature = "checked_write"), allow(unused_variables, clippy::let_and_return))]
-	fn __finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+	fn __finish<W: Write>(self, output: &mut W) -> BcResult<usize> {
 		#[cfg(feature = "checked_write")]
 		let prev_pos = output.get_pos();
 
@@ -116,7 +116,7 @@ pub trait Algorithm : Default {
 	}
 
 
-	fn filter_to_end<R: Read, W: Write>(&mut self, input: &mut R, output: &mut W) -> BcResult<usize> {
+	fn filter_to_end<R: Read, W: Write>(mut self, input: &mut R, output: &mut W) -> BcResult<usize> {
 		let mut bytes_written: usize = 0;
 
 		loop {
@@ -137,7 +137,7 @@ pub trait Algorithm : Default {
 	}
 
 
-	fn filter_iter<I: IntoIterator<Item=u8>, W: Write>(&mut self, input: I, output: &mut W) -> BcResult<usize> {
+	fn filter_iter<I: IntoIterator<Item=u8>, W: Write>(mut self, input: I, output: &mut W) -> BcResult<usize> {
 		let subtotal: usize = <I as IntoIterator>::into_iter(input)
 			.map(|byte| self.__filter_byte(byte, output))
 			.try_fold(0, |acc: usize, x|
@@ -152,7 +152,7 @@ pub trait Algorithm : Default {
 	}
 
 
-	fn filter_iter_to_vec<I: IntoIterator<Item=u8>>(&mut self, input: I) -> BcResult<Vec<u8>> {
+	fn filter_iter_to_vec<I: IntoIterator<Item=u8>>(self, input: I) -> BcResult<Vec<u8>> {
 		let mut output = Vec::new();
 		let bytes_written = self.filter_iter::<I, Vec<u8>>(input, &mut output)?;
 		output.truncate(bytes_written);
@@ -160,7 +160,7 @@ pub trait Algorithm : Default {
 	}
 
 
-	fn filter_slice_to_vec(&mut self, input: &[u8]) -> BcResult<Vec<u8>> {
+	fn filter_slice_to_vec(self, input: &[u8]) -> BcResult<Vec<u8>> {
 		self.filter_iter_to_vec(input.iter().copied())
 	}
 }
@@ -179,7 +179,7 @@ fn checked_write() {
 		}
 
 
-		fn finish<W: Write>(&mut self, _: &mut W) -> BcResult<usize> {
+		fn finish<W: Write>(self, _: &mut W) -> BcResult<usize> {
 			Ok(1) // wrong bytes_written reported, will be called, must panic
 		}
 	}
@@ -335,7 +335,7 @@ impl Algorithm for RleReader {
 	}
 
 
-	fn finish<W: Write>(&mut self, _: &mut W) -> BcResult<usize> {
+	fn finish<W: Write>(self, _: &mut W) -> BcResult<usize> {
 		use RleReaderState::*;
 
 		match self.state {
@@ -366,6 +366,47 @@ impl RleWriter {
 		let minimum_run = std::cmp::min(0x80, std::cmp::max(1, minimum_run));
 
 		Self { minimum_run, .. Self::new() }
+	}
+
+
+	fn dump<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		let (ref mut run_byte, ref mut run_size) = self.current_run;
+
+		if *run_size < self.minimum_run {
+			self.data_buffer.extend(&vec![*run_byte; *run_size][..]);
+			*run_size = 0;
+		};
+
+		let mut bytes_written: usize = 0;
+
+		for chunk in self.data_buffer.chunks(Self::MAX_BLOCK_SIZE) {
+			if chunk.is_empty() {
+				continue;
+			};
+
+			let header = (chunk.len() - 1) as u8;
+			output.write_byte(header)?;
+
+			for b in chunk {
+				output.write_byte(*b)?;
+			};
+
+			bytes_written += 1 + chunk.len();
+		};
+
+		self.data_buffer.truncate(0);
+
+		for chunk in (0..*run_size).chunks(Self::MAX_BLOCK_SIZE).into_iter() {
+			let len = chunk.collect_vec().len() as u8;
+			let header = (len - 1) ^ Self::RLE_FLAG;
+			output.write_byte(header)?;
+			output.write_byte(*run_byte)?;
+			bytes_written += 2;
+		};
+
+		*run_size = 0;
+
+		Ok(bytes_written)
 	}
 }
 
@@ -399,7 +440,7 @@ impl Algorithm for RleWriter {
 
 		let result =
 			if *run_size >= self.minimum_run {
-				self.finish(output)
+				self.dump(output)
 			}
 			else {
 				self.data_buffer.extend(&vec![*run_byte; *run_size][..]);
@@ -412,44 +453,8 @@ impl Algorithm for RleWriter {
 	}
 
 
-	fn finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
-		let (ref mut run_byte, ref mut run_size) = self.current_run;
-
-		if *run_size < self.minimum_run {
-			self.data_buffer.extend(&vec![*run_byte; *run_size][..]);
-			*run_size = 0;
-		};
-
-		let mut bytes_written: usize = 0;
-
-		for chunk in self.data_buffer.chunks(Self::MAX_BLOCK_SIZE) {
-			if chunk.is_empty() {
-				continue;
-			};
-
-			let header = (chunk.len() - 1) as u8;
-			output.write_byte(header)?;
-
-			for b in chunk {
-				output.write_byte(*b)?;
-			}
-
-			bytes_written += 1 + chunk.len();
-		}
-
-		self.data_buffer.truncate(0);
-
-		for chunk in (0..*run_size).chunks(Self::MAX_BLOCK_SIZE).into_iter() {
-			let len = chunk.collect_vec().len() as u8;
-			let header = (len - 1) ^ Self::RLE_FLAG;
-			output.write_byte(header)?;
-			output.write_byte(*run_byte)?;
-			bytes_written += 2;
-		}
-
-		*run_size = 0;
-
-		Ok(bytes_written)
+	fn finish<W: Write>(mut self, output: &mut W) -> BcResult<usize> {
+		self.dump(output)
 	}
 }
 
@@ -460,7 +465,7 @@ fn test_rle() {
 	assert_eq!(vec![0x00u8, 0x41], RleWriter::new().filter_slice_to_vec(&vec![0x41u8][..]).unwrap());
 
 	let mut writer = RleWriter::with_minimum_run(2);
-	let mut reader = RleReader::new();
+	let reader = RleReader::new();
 	let input = vec![0x61, 0x61, 0x84, 0x84, 0x10];
 	let wanted = vec![0x81, 0x61, 0x81, 0x84, 0x00, 0x10];
 	let mut actual = vec![];
@@ -889,6 +894,49 @@ impl LzssWriter {
 
 		Ok(bytes_written)
 	}
+
+
+	fn finish_self<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
+		use LzssWriterState::*;
+
+		match self.state {
+			BufferInit => {
+				if self.len == 0 {
+					return Ok(0);
+				};
+
+				self.finish_buffer_init();
+				self.state = MainLoop;
+				self.finish_self(output)
+			},
+
+			MainLoop => {
+				let bytes_written = self.main_loop_pre_read(output)?;
+				self.main_loop_post_read();
+
+				if self.len > 0 {
+					self.state = MainLoop;
+					self.i = 0;
+					Ok(bytes_written + self.finish_self(output)?)
+				}
+				else {
+					Ok(bytes_written + self.send_remaining(output)?)
+				}
+			},
+
+			ReadNew => {
+				self.main_loop_post_read();
+
+				if self.len > 0 {
+					self.state = MainLoop;
+					Ok(self.finish_self(output)?)
+				}
+				else {
+					Ok(self.send_remaining(output)?)
+				}
+			},
+		}
+	}
 }
 
 
@@ -982,46 +1030,8 @@ impl Algorithm for LzssWriter {
 	}
 
 
-	fn finish<W: Write>(&mut self, output: &mut W) -> BcResult<usize> {
-		use LzssWriterState::*;
-
-		match self.state {
-			BufferInit => {
-				if self.len == 0 {
-					return Ok(0);
-				};
-
-				self.finish_buffer_init();
-				self.state = MainLoop;
-				self.finish(output)
-			},
-
-			MainLoop => {
-				let bytes_written = self.main_loop_pre_read(output)?;
-				self.main_loop_post_read();
-
-				if self.len > 0 {
-					self.state = MainLoop;
-					self.i = 0;
-					Ok(bytes_written + self.finish(output)?)
-				}
-				else {
-					Ok(bytes_written + self.send_remaining(output)?)
-				}
-			},
-
-			ReadNew => {
-				self.main_loop_post_read();
-
-				if self.len > 0 {
-					self.state = MainLoop;
-					Ok(self.finish(output)?)
-				}
-				else {
-					Ok(self.send_remaining(output)?)
-				}
-			},
-		}
+	fn finish<W: Write>(mut self, output: &mut W) -> BcResult<usize> {
+		self.finish_self(output)
 	}
 }
 
